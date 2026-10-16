@@ -188,6 +188,19 @@ pub enum Request {
     /// answers whether or not the server shares the engines.
     #[serde(rename = "speech.models")]
     SpeechModels,
+    /// Downloads a speech model `speech.models` offers, so a pipeline can
+    /// fetch a whisper or TTS model without the window. Blocks until the
+    /// download and unpack finish - tens to hundreds of megabytes - through
+    /// the shared engine's one-at-a-time gate, so it never races the window's
+    /// own download. A model already on disk is a no-op; refused when the
+    /// matching engine is not shared.
+    #[serde(rename = "speech.download")]
+    SpeechDownload {
+        /// "transcriber" for a whisper model, "tts" for a voice model.
+        kind: String,
+        /// The model id, exactly as `speech.models` lists it.
+        model_id: String,
+    },
 
     /// Every effect package the build knows, with its parameters, so a
     /// caller can build a valid chain without reading a manifest.

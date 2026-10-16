@@ -361,6 +361,10 @@ impl Api {
             }
             Request::SpeechTts { request } => Ok(Reply::Spoken(self.speak(&request)?)),
             Request::SpeechModels => Ok(Reply::SpeechModels(self.speech_models()?)),
+            Request::SpeechDownload { kind, model_id } => {
+                self.download_speech_model(&kind, &model_id)?;
+                Ok(Reply::Done(Done {}))
+            }
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
             Request::TemplateInstantiate {
@@ -539,6 +543,31 @@ impl Api {
             transcriber: Transcriber::status(&self.dirs).map_err(ApiError::failed)?,
             tts: Speech::status(&self.dirs).map_err(ApiError::failed)?,
         })
+    }
+
+    /// [`Request::SpeechDownload`]: fetches a whisper or TTS model through the
+    /// shared engine, so its one-at-a-time download gate is honoured with the
+    /// window. Blocks until the download and unpack finish; refused when the
+    /// matching engine is not shared.
+    pub fn download_speech_model(&self, kind: &str, model_id: &str) -> Result<(), ApiError> {
+        let no_speech = || ApiError::failed("this server serves no speech");
+        match kind {
+            "transcriber" => self
+                .transcriber
+                .as_ref()
+                .ok_or_else(no_speech)?
+                .download_model(&self.dirs, model_id, |_| {})
+                .map_err(ApiError::failed),
+            "tts" => self
+                .speech
+                .as_ref()
+                .ok_or_else(no_speech)?
+                .download_model(&self.dirs, model_id, |_| {})
+                .map_err(ApiError::failed),
+            other => Err(ApiError::invalid(format!(
+                "kind must be \"transcriber\" or \"tts\", not {other:?}"
+            ))),
+        }
     }
 
     /// [`Request::TemplateInstantiate`].
