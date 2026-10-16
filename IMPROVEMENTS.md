@@ -53,19 +53,29 @@ Update the **Status** column below after every compare.
 
 ## Backlog (weak points to fix; see session notes)
 
-Ranked by value for a polished auto-clip:
-
+Done:
 1. ~~Word-level captions~~ → done (#3).
 2. ~~`speech.models` — list downloaded models + voices~~ → done (#4).
-3. Export/job **event streaming** through the MCP bridge (API already emits
-   events; bridge must forward so callers stop polling the output file).
-4. Audio auto-polish: silence-trim, loudness-normalize, music ducking.
-5. Cutout (background removal) exposed as an `edit.apply`/API command.
-6. High-level helpers (transition-between-cuts, animate-caption) — ergonomics.
 
-Out of scope for the API: **visual sourcing** (stock footage / image gen) — a
-polished clip needs good visuals, but Concat is an editor, not an asset bank;
-integrate externally.
+**Re-audit (several earlier "gaps" were wrong — upstream already has them):**
+- Cutout / background removal: **already** `SetClipCutout` + `AddCutoutStroke`,
+  analysed automatically at export. Not a gap.
+- Loudness normalize / voice enhance: **already** audio effects ("Normalize
+  Loudness", "Enhance Voice"), appliable via `AddLayerClip`/clip filters.
+- Music ducking: **doable** today via `SetClipKey` on `KeyProperty::Volume`.
+- Transitions (20) + keyframes (scale/offset/opacity/rotation/volume): present.
+
+Genuinely still open, ranked:
+3. Export/job **event streaming** through the MCP bridge (API already emits
+   events; bridge polls the output file instead). Modest value.
+4. **Auto silence-trim** — detect and cut silences/breaths. Genuine gap, niche.
+5. High-level **helpers** that compose the primitives: karaoke caption
+   placement from `Segment.words` (now available), auto-ducking a music clip
+   under the voice, slideshow-from-images. Ergonomics, not missing capability.
+
+Out of scope for the API: **visual sourcing** (stock footage / image gen) and a
+solid/gradient **background generator** (catalogue has none) — Concat is an
+editor, not an asset bank; bring assets or integrate a source externally.
 
 ## MCP bridge (fork-local, not in the Concat repo)
 
