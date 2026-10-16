@@ -873,18 +873,24 @@ impl Speech {
         // Chatterbox is its own loop: the recording in, the samples out,
         // and the file written here. Sherpa's families go on below.
         // A named voice's recording lives in the Pocket bundle, whichever
-        // model reads it; a chosen recording needs no bundle at all.
-        let recordings = if is_clone(request.voice) {
-            dir.clone()
-        } else {
-            recordings_dir(dirs)?
+        // model reads it; a chosen recording needs no bundle at all. Kokoro
+        // names its own speakers and reads no recording, so the bundle is
+        // resolved only where a voice is actually read from one: resolving it
+        // up front made a Kokoro voice need Pocket on disk for a recording it
+        // never opens.
+        let recordings = || -> Result<PathBuf, String> {
+            if is_clone(request.voice) {
+                Ok(dir.clone())
+            } else {
+                recordings_dir(dirs)
+            }
         };
 
         #[cfg(feature = "chatterbox")]
         let tts = match tts {
             Engine::Chatterbox(chatterbox) => {
                 progress(JobStage::Reading);
-                let samples = reference_samples(&recordings, request)?;
+                let samples = reference_samples(&recordings()?, request)?;
                 progress(JobStage::Working {
                     done: 0.0,
                     next: CHATTERBOX_STEP,
@@ -949,7 +955,7 @@ impl Speech {
             },
             _ => {
                 progress(JobStage::Reading);
-                let samples = reference_samples(&recordings, request)?;
+                let samples = reference_samples(&recordings()?, request)?;
                 GenerationConfig {
                     speed,
                     silence_scale,
