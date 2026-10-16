@@ -49,6 +49,9 @@ use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, media, projects};
 use concat_project::Command;
 use concat_project::model::VideoSettings;
+use concat_speech::transcribe::{Segment, TranscribeRequest};
+use concat_speech::tts::{SpeakRequest, SpeakResult};
+use concat_speech::{Speech, Transcriber};
 
 pub use message::{
     API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, PackageInfo, ParamInfo,
@@ -158,6 +161,13 @@ pub struct Api {
     cutouts: Arc<Cutouts>,
     monitor: Monitor,
     exporter: Exporter,
+    /// whisper.cpp, shared from an embedder so the socket reads with the
+    /// window's downloaded models. `None` when the transport serves no
+    /// speech, and then `speech.transcribe` is refused.
+    transcriber: Option<Arc<Transcriber>>,
+    /// Kokoro and the other voices, shared the same way. `None` refuses
+    /// `speech.tts`.
+    speech: Option<Arc<Speech>>,
     events: EventSink,
     jobs: Jobs,
     /// [`VersionInfo::capabilities`], in the order they were added.
@@ -179,6 +189,8 @@ impl Api {
             cutouts: Arc::new(Cutouts::new(&dirs.data)),
             monitor: Monitor::new(),
             exporter: Exporter::new(),
+            transcriber: None,
+            speech: None,
             sessions: BTreeMap::new(),
             roots: Vec::new(),
             open: OpenProjects::default(),
@@ -220,6 +232,23 @@ impl Api {
     /// round.
     pub fn share_open_projects(&mut self, open: OpenProjects) {
         self.open = open;
+    }
+
+    /// Takes an embedder's transcriber, so `speech.transcribe` reads with the
+    /// same whisper models the window downloaded, loaded once between the two.
+    /// Adds "speech" to [`VersionInfo::capabilities`]; without it that method
+    /// is refused.
+    pub fn share_transcriber(&mut self, transcriber: Arc<Transcriber>) {
+        self.transcriber = Some(transcriber);
+        self.add_capability("speech");
+    }
+
+    /// Takes an embedder's voices, so `speech.tts` reads with the same TTS
+    /// models the window downloaded. Adds "speech" to
+    /// [`VersionInfo::capabilities`]; without it that method is refused.
+    pub fn share_speech(&mut self, speech: Arc<Speech>) {
+        self.speech = Some(speech);
+        self.add_capability("speech");
     }
 
     /// Confines every write to `roots`: from here on a created project, an
@@ -327,6 +356,10 @@ impl Api {
                 Ok(Reply::Media(media::probe(&path).map_err(ApiError::failed)?))
             }
             Request::MediaImport { path, file } => view(self.import(&path, &file)?),
+            Request::SpeechTranscribe { request } => {
+                Ok(Reply::Captions(self.transcribe(&request)?))
+            }
+            Request::SpeechTts { request } => Ok(Reply::Spoken(self.speak(&request)?)),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
             Request::TemplateInstantiate {
@@ -465,6 +498,35 @@ impl Api {
     pub fn import(&mut self, path: &str, file: &str) -> Result<EditorView, ApiError> {
         let item = media::probe(file).map_err(ApiError::failed)?.to_new_media();
         self.apply(path, Command::AddMedia { item })
+    }
+
+    /// [`Request::SpeechTranscribe`]: the clip's words, timed from the
+    /// window's start. Runs on the calling thread, which the hub serialises
+    /// like any other call. Refused when no transcriber is shared, or the
+    /// model named is not downloaded.
+    pub fn transcribe(&self, request: &TranscribeRequest) -> Result<Vec<Segment>, ApiError> {
+        let transcriber = self
+            .transcriber
+            .as_ref()
+            .ok_or_else(|| ApiError::failed("this server serves no speech"))?;
+        transcriber
+            .transcribe(&self.dirs, request, |_| {})
+            .map_err(ApiError::failed)
+    }
+
+    /// [`Request::SpeechTts`]: a WAV read from the text into the project
+    /// folder, its path ready for [`Request::MediaImport`]. Refused when no
+    /// voices are shared, the project folder is outside the write roots, or
+    /// the model named is not downloaded.
+    pub fn speak(&self, request: &SpeakRequest) -> Result<SpeakResult, ApiError> {
+        let speech = self
+            .speech
+            .as_ref()
+            .ok_or_else(|| ApiError::failed("this server serves no speech"))?;
+        self.writable(&request.project)?;
+        speech
+            .speak(&self.dirs, request, |_| {})
+            .map_err(ApiError::failed)
     }
 
     /// [`Request::TemplateInstantiate`].

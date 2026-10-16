@@ -181,7 +181,7 @@ pub struct Segment {
 }
 
 /// What to transcribe.
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscribeRequest {
     /// The media file to transcribe.

@@ -569,6 +569,8 @@ impl SettingsPane {
         self.server_error.clear();
         let exporter = studio.host.exporter.clone();
         let open_projects = studio.host.open_projects.clone();
+        let transcriber = studio.host.transcriber.clone();
+        let speech = studio.host.speech.clone();
         let prefs = &studio.prefs.server;
         if !prefs.enabled {
             return;
@@ -586,11 +588,16 @@ impl SettingsPane {
                 };
                 // The window's export slot and its register of open
                 // projects, so one export at a time holds across the two
-                // and a caller never edits the project on screen.
+                // and a caller never edits the project on screen. The
+                // transcriber and the voices too, so a caller reads captions
+                // and speech with the models the window downloaded, loaded
+                // once between the two.
                 concat_server::Server::start(config, move |events| {
                     let mut api = concat_api::Api::new(events)?;
                     api.share_exporter(exporter);
                     api.share_open_projects(open_projects);
+                    api.share_transcriber(transcriber);
+                    api.share_speech(speech);
                     Ok(api)
                 })
             });

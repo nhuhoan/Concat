@@ -342,7 +342,7 @@ pub struct VoiceInfo {
 }
 
 /// A recording to read in the voice of: the clip the sheet was given.
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Reference {
     /// The media file.
@@ -365,7 +365,7 @@ pub struct TtsStatus {
 }
 
 /// What to say, and where the file goes.
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeakRequest {
     /// Which model to use, e.g. "kokoro-int8-multi-lang-v1_0".

@@ -32,6 +32,8 @@ use concat_host::templates::TemplateInfo;
 use concat_host::{AppDirs, ProjectInfo};
 use concat_project::Command;
 use concat_project::model::VideoSettings;
+use concat_speech::transcribe::{Segment, TranscribeRequest};
+use concat_speech::tts::{SpeakRequest, SpeakResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -155,6 +157,30 @@ pub enum Request {
         path: String,
         /// The file to import.
         file: String,
+    },
+
+    /// Transcribes a clip's audio to timed caption segments with one of the
+    /// whisper models Settings has downloaded. Reads only; it places nothing.
+    /// The segments are seconds from the window's start, for the caller to
+    /// turn into caption clips with [`Request::EditApply`], the way the
+    /// window's Captions tool does. Refused when the server shares no
+    /// transcriber - its [`Request::Version`] capabilities then omit
+    /// "speech".
+    #[serde(rename = "speech.transcribe")]
+    SpeechTranscribe {
+        /// The clip and the model; see [`TranscribeRequest`].
+        #[serde(flatten)]
+        request: TranscribeRequest,
+    },
+    /// Reads text in a chosen voice to a WAV in the project folder, with one
+    /// of the TTS models Settings has downloaded. Returns the file's path,
+    /// ready for [`Request::MediaImport`]. Refused when the server shares no
+    /// voices - its [`Request::Version`] capabilities then omit "speech".
+    #[serde(rename = "speech.tts")]
+    SpeechTts {
+        /// The text, the voice and where the file goes; see [`SpeakRequest`].
+        #[serde(flatten)]
+        request: SpeakRequest,
     },
 
     /// Every effect package the build knows, with its parameters, so a
@@ -307,6 +333,11 @@ pub enum Reply {
     Document(Value),
     /// [`Request::MediaProbe`].
     Media(MediaSummary),
+    /// [`Request::SpeechTranscribe`]: the clip's words, timed from the
+    /// window's start.
+    Captions(Vec<Segment>),
+    /// [`Request::SpeechTts`]: the WAV written, and how long it is.
+    Spoken(SpeakResult),
     /// [`Request::CatalogueList`].
     Packages(Vec<PackageInfo>),
     /// [`Request::TemplateList`].
