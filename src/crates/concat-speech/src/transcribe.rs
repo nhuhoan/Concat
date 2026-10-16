@@ -168,6 +168,19 @@ pub struct TranscriberStatus {
     pub models: Vec<ModelStatus>,
 }
 
+/// One word of a caption, timed from the window's start. The grain a
+/// karaoke-style caption highlights one word at a time from.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Word {
+    /// Seconds from the window's start.
+    pub start: f64,
+    /// Seconds from the window's start.
+    pub end: f64,
+    /// The word, trimmed of the space whisper's tokenizer leads it with.
+    pub text: String,
+}
+
 /// One caption, in seconds relative to the transcribed window's start.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +191,11 @@ pub struct Segment {
     pub end: f64,
     /// What was said.
     pub text: String,
+    /// The words that make the caption, each timed on its own, for a
+    /// caption that lights a word at a time. Empty when the model gave no
+    /// usable token timestamps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<Word>,
 }
 
 /// What to transcribe.
@@ -435,6 +453,11 @@ impl Transcriber {
             });
         });
 
+        // Per-token timestamps, so each caption carries its words timed on
+        // their own for a karaoke-style highlight; the segment spans are the
+        // same with or without it.
+        params.set_token_timestamps(true);
+
         state
             .full(params, &samples)
             .map_err(|error| format!("transcription failed: {error}"))?;
@@ -449,7 +472,39 @@ impl Transcriber {
                 let start = segment.start_timestamp() as f64 / 100.0;
                 let end = segment.end_timestamp() as f64 / 100.0;
                 let text = segment.to_str_lossy().ok()?.trim().to_owned();
-                keep_segment(start, end, text)
+                // One word per run of tokens: whisper's tokenizer leads each
+                // word with a space, so a leading space opens a new word and
+                // a token without one is a subword glued to the one before.
+                // Special tokens ("[_TT_..]", "<|..|>") carry no text.
+                let mut words: Vec<Word> = Vec::new();
+                for index in 0..segment.n_tokens() {
+                    let Some(token) = segment.get_token(index) else {
+                        continue;
+                    };
+                    let Ok(piece) = token.to_str_lossy() else {
+                        continue;
+                    };
+                    if piece.starts_with("[_") || piece.starts_with("<|") {
+                        continue;
+                    }
+                    let trimmed = piece.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let data = token.token_data();
+                    let (t0, t1) = (data.t0 as f64 / 100.0, data.t1 as f64 / 100.0);
+                    if piece.starts_with(' ') || words.is_empty() {
+                        words.push(Word {
+                            start: t0.max(0.0),
+                            end: t1.max(t0),
+                            text: trimmed.to_owned(),
+                        });
+                    } else if let Some(last) = words.last_mut() {
+                        last.text.push_str(trimmed);
+                        last.end = last.end.max(t1);
+                    }
+                }
+                keep_segment(start, end, text, words)
             })
             .collect())
     }
@@ -468,11 +523,16 @@ impl Transcriber {
 /// Whisper marks silence and music with bracketed stage directions
 /// ("[BLANK_AUDIO]", "(upbeat music)"). Those are not captions, and neither
 /// is an empty or degenerate span.
-fn keep_segment(start: f64, end: f64, text: String) -> Option<Segment> {
+fn keep_segment(start: f64, end: f64, text: String, words: Vec<Word>) -> Option<Segment> {
     if text.is_empty() || (text.starts_with('[') && text.ends_with(']')) {
         return None;
     }
-    (end > start).then_some(Segment { start, end, text })
+    (end > start).then_some(Segment {
+        start,
+        end,
+        text,
+        words,
+    })
 }
 
 #[cfg(test)]
