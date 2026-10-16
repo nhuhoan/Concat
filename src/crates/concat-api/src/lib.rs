@@ -42,13 +42,15 @@ use concat_effects::manifest::Kind;
 use concat_export::{ExportClip, ExportRequest};
 pub use concat_host::AppDirs;
 use concat_host::cutout::{self, AnalyseRequest, Cutouts};
+use concat_host::enhance::{self, EnhanceRequest, Enhancers};
 use concat_host::export::{self, Exporter};
 use concat_host::preview::{FrameSpec, Monitor};
+use concat_host::reverse::{self, ReverseRequest, Reversers};
 use concat_host::session::EditorView;
 use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, media, projects};
 use concat_project::Command;
-use concat_project::model::VideoSettings;
+use concat_project::model::{MediaKind, VideoSettings};
 use concat_speech::transcribe::{Segment, TranscribeRequest};
 use concat_speech::tts::{SpeakRequest, SpeakResult};
 use concat_speech::{Speech, Transcriber};
@@ -168,6 +170,12 @@ pub struct Api {
     /// Kokoro and the other voices, shared the same way. `None` refuses
     /// `speech.tts`.
     speech: Option<Arc<Speech>>,
+    /// The upscale/restore model, shared from an embedder. `None` refuses
+    /// `clip.enhance`.
+    enhancers: Option<Arc<Enhancers>>,
+    /// The clip reverser, shared from an embedder. `None` refuses
+    /// `clip.reverse`.
+    reversers: Option<Arc<Reversers>>,
     events: EventSink,
     jobs: Jobs,
     /// [`VersionInfo::capabilities`], in the order they were added.
@@ -191,6 +199,8 @@ impl Api {
             exporter: Exporter::new(),
             transcriber: None,
             speech: None,
+            enhancers: None,
+            reversers: None,
             sessions: BTreeMap::new(),
             roots: Vec::new(),
             open: OpenProjects::default(),
@@ -249,6 +259,23 @@ impl Api {
     pub fn share_speech(&mut self, speech: Arc<Speech>) {
         self.speech = Some(speech);
         self.add_capability("speech");
+    }
+
+    /// Takes an embedder's upscale/restore model, so `clip.enhance` writes
+    /// enhanced copies with the window's model, fetched once between the two.
+    /// Adds "enhance" to [`VersionInfo::capabilities`]; without it that method
+    /// is refused.
+    pub fn share_enhancers(&mut self, enhancers: Arc<Enhancers>) {
+        self.enhancers = Some(enhancers);
+        self.add_capability("enhance");
+    }
+
+    /// Takes an embedder's clip reverser, so `clip.reverse` writes reversed
+    /// copies the same way. Adds "reverse" to [`VersionInfo::capabilities`];
+    /// without it that method is refused.
+    pub fn share_reversers(&mut self, reversers: Arc<Reversers>) {
+        self.reversers = Some(reversers);
+        self.add_capability("reverse");
     }
 
     /// Confines every write to `roots`: from here on a created project, an
@@ -365,6 +392,20 @@ impl Api {
                 self.download_speech_model(&kind, &model_id)?;
                 Ok(Reply::Done(Done {}))
             }
+            Request::SpeechDeleteModel { kind, model_id } => {
+                self.delete_speech_model(&kind, &model_id)?;
+                Ok(Reply::Done(Done {}))
+            }
+            Request::SpeechCancelDownload { kind } => {
+                self.cancel_speech_download(&kind)?;
+                Ok(Reply::Done(Done {}))
+            }
+            Request::ClipEnhance {
+                path,
+                clip_id,
+                factor,
+            } => view(self.enhance_clip(&path, &clip_id, factor.unwrap_or(2))?),
+            Request::ClipReverse { path, clip_id } => view(self.reverse_clip(&path, &clip_id)?),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
             Request::TemplateInstantiate {
@@ -568,6 +609,155 @@ impl Api {
                 "kind must be \"transcriber\" or \"tts\", not {other:?}"
             ))),
         }
+    }
+
+    /// [`Request::SpeechDeleteModel`]: removes a downloaded whisper or TTS
+    /// model through the shared engine. Refused when the engine is not shared.
+    pub fn delete_speech_model(&self, kind: &str, model_id: &str) -> Result<(), ApiError> {
+        let no_speech = || ApiError::failed("this server serves no speech");
+        match kind {
+            "transcriber" => self
+                .transcriber
+                .as_ref()
+                .ok_or_else(no_speech)?
+                .delete_model(&self.dirs, model_id)
+                .map_err(ApiError::failed),
+            "tts" => self
+                .speech
+                .as_ref()
+                .ok_or_else(no_speech)?
+                .delete_model(&self.dirs, model_id)
+                .map_err(ApiError::failed),
+            other => Err(ApiError::invalid(format!(
+                "kind must be \"transcriber\" or \"tts\", not {other:?}"
+            ))),
+        }
+    }
+
+    /// [`Request::SpeechCancelDownload`]: stops a running model download. A
+    /// no-op when nothing is downloading or the engine is not shared.
+    pub fn cancel_speech_download(&self, kind: &str) -> Result<(), ApiError> {
+        match kind {
+            "transcriber" => {
+                if let Some(transcriber) = &self.transcriber {
+                    transcriber.cancel_download();
+                }
+                Ok(())
+            }
+            "tts" => {
+                if let Some(speech) = &self.speech {
+                    speech.cancel_download();
+                }
+                Ok(())
+            }
+            other => Err(ApiError::invalid(format!(
+                "kind must be \"transcriber\" or \"tts\", not {other:?}"
+            ))),
+        }
+    }
+
+    /// [`Request::ClipEnhance`]: writes an upscaled/restored copy of the
+    /// clip's media and points the clip at it, as the window's Enhance does.
+    /// Blocks on the model (fetched on first use); refused when no enhancer is
+    /// shared or the clip or its media is gone.
+    pub fn enhance_clip(
+        &mut self,
+        path: &str,
+        clip_id: &str,
+        factor: u32,
+    ) -> Result<EditorView, ApiError> {
+        let enhancers = self
+            .enhancers
+            .clone()
+            .ok_or_else(|| ApiError::failed("this server enhances nothing"))?;
+        let (media_path, still) = {
+            let session = self.session(path)?;
+            let clip = session.project().clip(clip_id).ok_or_else(|| {
+                ApiError::new(ErrorCode::NotFound, format!("no clip {clip_id:?}"))
+            })?;
+            let media = session
+                .project()
+                .media_by_id(&clip.media_id)
+                .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "the clip's media is gone"))?;
+            (media.path.clone(), media.kind == MediaKind::Image)
+        };
+        let target = enhance::target_for(Path::new(path), &media_path, factor, still)
+            .ok_or_else(|| ApiError::failed("could not place the enhanced copy"))?;
+        enhancers
+            .enhance(
+                &EnhanceRequest {
+                    media_path,
+                    still,
+                    factor,
+                    target: target.clone(),
+                },
+                &mut |_| {},
+            )
+            .map_err(ApiError::failed)?;
+        let item = media::probe(&target.to_string_lossy())
+            .map_err(ApiError::failed)?
+            .to_new_media();
+        self.apply(
+            path,
+            Command::ReplaceClipMedia {
+                clip_id: clip_id.to_owned(),
+                item,
+                source_start: None,
+                enhanced: true,
+            },
+        )
+    }
+
+    /// [`Request::ClipReverse`]: writes a reversed copy of the span the clip
+    /// shows and points the clip at it, as the window's Reverse does. Blocks;
+    /// refused when no reverser is shared or the clip or its media is gone.
+    pub fn reverse_clip(&mut self, path: &str, clip_id: &str) -> Result<EditorView, ApiError> {
+        let reversers = self
+            .reversers
+            .clone()
+            .ok_or_else(|| ApiError::failed("this server reverses nothing"))?;
+        let (media_path, audio_only, start, duration) = {
+            let session = self.session(path)?;
+            let clip = session.project().clip(clip_id).ok_or_else(|| {
+                ApiError::new(ErrorCode::NotFound, format!("no clip {clip_id:?}"))
+            })?;
+            let media = session
+                .project()
+                .media_by_id(&clip.media_id)
+                .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "the clip's media is gone"))?;
+            (
+                media.path.clone(),
+                media.kind == MediaKind::Audio,
+                clip.source_start,
+                clip.duration * clip.speed,
+            )
+        };
+        let target = reverse::target_for(Path::new(path), &media_path, start, duration, audio_only)
+            .ok_or_else(|| ApiError::failed("could not place the reversed copy"))?;
+        reversers
+            .reverse(
+                &ReverseRequest {
+                    media_path,
+                    audio_only,
+                    start,
+                    duration,
+                    target: target.clone(),
+                },
+                &mut |_| {},
+            )
+            .map_err(ApiError::failed)?;
+        let item = media::probe(&target.to_string_lossy())
+            .map_err(ApiError::failed)?
+            .to_new_media();
+        self.apply(
+            path,
+            Command::ReplaceClipMedia {
+                clip_id: clip_id.to_owned(),
+                item,
+                source_start: Some(0.0),
+                enhanced: false,
+            },
+        )
     }
 
     /// [`Request::TemplateInstantiate`].

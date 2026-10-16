@@ -201,6 +201,48 @@ pub enum Request {
         /// The model id, exactly as `speech.models` lists it.
         model_id: String,
     },
+    /// Removes a downloaded speech model to reclaim disk. `kind` is
+    /// "transcriber" or "tts". Refused when the matching engine is not shared.
+    #[serde(rename = "speech.deleteModel")]
+    SpeechDeleteModel {
+        /// "transcriber" or "tts".
+        kind: String,
+        /// The model id to remove.
+        model_id: String,
+    },
+    /// Stops a running `speech.download`. A no-op when nothing is downloading.
+    #[serde(rename = "speech.cancelDownload")]
+    SpeechCancelDownload {
+        /// "transcriber" or "tts".
+        kind: String,
+    },
+
+    /// Writes an upscaled/restored copy of a clip's media and points the clip
+    /// at it, as the window's Enhance does: the original stays in the bin, and
+    /// `clip.enhance` can be undone. Blocks on the model (fetched on first
+    /// use). Refused when the server shares no enhancer (its capabilities omit
+    /// "enhance").
+    #[serde(rename = "clip.enhance")]
+    ClipEnhance {
+        /// The project folder.
+        path: String,
+        /// The clip to enhance.
+        clip_id: String,
+        /// How many times larger; 2 when absent. The model clamps it to what
+        /// it supports.
+        #[serde(default)]
+        factor: Option<u32>,
+    },
+    /// Writes a reversed copy of the span a clip shows and points the clip at
+    /// it, as the window's Reverse does. Blocks. Refused when the server
+    /// shares no reverser (its capabilities omit "reverse").
+    #[serde(rename = "clip.reverse")]
+    ClipReverse {
+        /// The project folder.
+        path: String,
+        /// The clip to reverse.
+        clip_id: String,
+    },
 
     /// Every effect package the build knows, with its parameters, so a
     /// caller can build a valid chain without reading a manifest.

@@ -571,6 +571,8 @@ impl SettingsPane {
         let open_projects = studio.host.open_projects.clone();
         let transcriber = studio.host.transcriber.clone();
         let speech = studio.host.speech.clone();
+        let enhancers = studio.host.enhancers.clone();
+        let reversers = studio.host.reversers.clone();
         let prefs = &studio.prefs.server;
         if !prefs.enabled {
             return;
@@ -598,6 +600,8 @@ impl SettingsPane {
                     api.share_open_projects(open_projects);
                     api.share_transcriber(transcriber);
                     api.share_speech(speech);
+                    api.share_enhancers(enhancers);
+                    api.share_reversers(reversers);
                     Ok(api)
                 })
             });
