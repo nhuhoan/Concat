@@ -50,7 +50,40 @@ Update the **Status** column below after every compare.
 | 3 | Word-level timestamps on captions (`Segment.words`) for karaoke captions | `concat-speech/src/transcribe.rs` | `feat(speech): word-level timestamps for captions` | none | **ours — active** |
 | 4 | `speech.models` lists whisper/TTS models + voices with downloaded flag | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add speech.models to list models and voices` | none | **ours — active** |
 | 5 | `speech.download` fetches a whisper/TTS model headlessly through the shared engine | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add speech.download to fetch models headlessly` | none | **ours — active** |
+| 6 | `clip.enhance` / `clip.reverse` — AI upscale/restore and reverse a clip over the socket (share enhancers/reversers) | `concat-api/src/{lib.rs,message.rs}`, `concat/src/panes/settings.rs` | `feat(api): expose clip.enhance/clip.reverse and speech model management` | none | **ours — active** |
+| 7 | `speech.deleteModel` / `speech.cancelDownload` — round out model management | `concat-api/src/{lib.rs,message.rs}` | (same commit as #6) | none | **ours — active** |
 | — | CI manual dispatch (fork-only, never upstream) | `.github/workflows/build-app.yml` | `ci: allow manual dispatch (fork-only)` | n/a | fork-only |
+
+> #6 and #7 share one commit (same files, interleaved). If upstream later adds
+> one, split with `git rebase -i` before dropping the other.
+
+## MCP editing-support verification
+
+Audit of the `Command` enum (what `edit.apply` can do) vs common editing needs:
+
+| Need | Via MCP? |
+|---|---|
+| Trim / split / move / remove / merge clips | ✅ TrimClip, SplitClips, MoveClips, RemoveClips, MergeClips |
+| Add media / clips / text / shapes / effect layers | ✅ AddMedia, AddClip, AddTextClip, AddShapeClip, AddLayerClip |
+| Fades, crop, per-clip transition | ✅ UpdateClip (fadeIn/out, crop, transition) |
+| Transform (scale/pos/rotate/opacity), speed | ✅ SetClipTransform, SetClipSpeed/SpeedCurve |
+| Keyframe animation (incl. volume → ducking) | ✅ SetClipKey / SetEffectKey |
+| Filters / effects / transitions (57 / 21 / 20) + color grade | ✅ catalogue + AddLayerClip |
+| Cutout (bg removal), freeze frame, detach/reattach audio | ✅ SetClipCutout, FreezeFrame, DetachAudio |
+| Tracks / timelines / fonts management | ✅ AddTrack, AddTimeline, AddFont, … |
+| Captions (word-level), TTS, enhance, reverse, model mgmt | ✅ ours (#1–#7) |
+| Export, preview frame, templates, undo/redo/batch | ✅ |
+
+**Genuinely NOT supported via MCP (candidate suggestions):**
+1. **Auto silence-trim** — detect and cut silences/breaths from a voice clip.
+2. **Background generator** — a solid/gradient/noise clip (catalogue has no
+   `generator` kind), so a faceless clip needs an imported image for a backdrop.
+3. **Markers / chapters** — no marker command; useful for navigation and
+   chapterised export.
+4. **Beat / scene detection** — auto-cut to music or shot changes.
+
+→ Everything else standard is already callable. The above are the real
+additions worth making next (plus visual sourcing, which stays external).
 
 CI verified (run on sha f6027b5): #1–#4 compile green on linux-x86_64; the
 whisper-rs token-timestamp API (#3) is correct.
