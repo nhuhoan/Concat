@@ -49,7 +49,11 @@ Update the **Status** column below after every compare.
 | 2 | Kokoro no longer needs Pocket TTS on disk (lazy `recordings` resolution) | `concat-speech/src/tts.rs` | `fix(speech): a Kokoro voice no longer needs Pocket TTS` | bug, none | **ours — active** |
 | 3 | Word-level timestamps on captions (`Segment.words`) for karaoke captions | `concat-speech/src/transcribe.rs` | `feat(speech): word-level timestamps for captions` | none | **ours — active** |
 | 4 | `speech.models` lists whisper/TTS models + voices with downloaded flag | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add speech.models to list models and voices` | none | **ours — active** |
+| 5 | `speech.download` fetches a whisper/TTS model headlessly through the shared engine | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add speech.download to fetch models headlessly` | none | **ours — active** |
 | — | CI manual dispatch (fork-only, never upstream) | `.github/workflows/build-app.yml` | `ci: allow manual dispatch (fork-only)` | n/a | fork-only |
+
+CI verified (run on sha f6027b5): #1–#4 compile green on linux-x86_64; the
+whisper-rs token-timestamp API (#3) is correct.
 
 ## Backlog (weak points to fix; see session notes)
 
