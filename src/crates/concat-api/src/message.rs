@@ -32,8 +32,8 @@ use concat_host::templates::TemplateInfo;
 use concat_host::{AppDirs, ProjectInfo};
 use concat_project::Command;
 use concat_project::model::VideoSettings;
-use concat_speech::transcribe::{Segment, TranscribeRequest};
-use concat_speech::tts::{SpeakRequest, SpeakResult};
+use concat_speech::transcribe::{Segment, TranscribeRequest, TranscriberStatus};
+use concat_speech::tts::{SpeakRequest, SpeakResult, TtsStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -182,6 +182,12 @@ pub enum Request {
         #[serde(flatten)]
         request: SpeakRequest,
     },
+    /// Lists the whisper models for `speech.transcribe` and the TTS models
+    /// and voices for `speech.tts`, and which are downloaded, so a caller
+    /// picks a valid `modelId` or `voice` without guessing. Reads disk only;
+    /// answers whether or not the server shares the engines.
+    #[serde(rename = "speech.models")]
+    SpeechModels,
 
     /// Every effect package the build knows, with its parameters, so a
     /// caller can build a valid chain without reading a manifest.
@@ -317,6 +323,17 @@ pub struct ExportSpec {
     pub hdr: Option<bool>,
 }
 
+/// What `speech.models` hands back: the whisper models for transcription,
+/// and the TTS models and voices, each with what is downloaded.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechCatalogue {
+    /// Whisper models for [`Request::SpeechTranscribe`].
+    pub transcriber: TranscriberStatus,
+    /// TTS models and voices for [`Request::SpeechTts`].
+    pub tts: TtsStatus,
+}
+
 /// What a request hands back. Serialised as the payload alone: the variant
 /// is implied by the method, so a caller that sent `project.get` reads an
 /// editor view and nothing wraps it.
@@ -338,6 +355,8 @@ pub enum Reply {
     Captions(Vec<Segment>),
     /// [`Request::SpeechTts`]: the WAV written, and how long it is.
     Spoken(SpeakResult),
+    /// [`Request::SpeechModels`]: the speech models and voices on offer.
+    SpeechModels(SpeechCatalogue),
     /// [`Request::CatalogueList`].
     Packages(Vec<PackageInfo>),
     /// [`Request::TemplateList`].

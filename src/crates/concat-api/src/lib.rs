@@ -55,7 +55,7 @@ use concat_speech::{Speech, Transcriber};
 
 pub use message::{
     API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, PackageInfo, ParamInfo,
-    Picture, Reply, Request, Response, Started, VersionInfo, Written,
+    Picture, Reply, Request, Response, SpeechCatalogue, Started, VersionInfo, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -360,6 +360,7 @@ impl Api {
                 Ok(Reply::Captions(self.transcribe(&request)?))
             }
             Request::SpeechTts { request } => Ok(Reply::Spoken(self.speak(&request)?)),
+            Request::SpeechModels => Ok(Reply::SpeechModels(self.speech_models()?)),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
             Request::TemplateInstantiate {
@@ -527,6 +528,17 @@ impl Api {
         speech
             .speak(&self.dirs, request, |_| {})
             .map_err(ApiError::failed)
+    }
+
+    /// [`Request::SpeechModels`]: the whisper and TTS models on disk and the
+    /// voices, for a caller to pick a valid `modelId` or `voice` from. Reads
+    /// the model directories only, so it answers whether or not the engines
+    /// are shared.
+    pub fn speech_models(&self) -> Result<SpeechCatalogue, ApiError> {
+        Ok(SpeechCatalogue {
+            transcriber: Transcriber::status(&self.dirs).map_err(ApiError::failed)?,
+            tts: Speech::status(&self.dirs).map_err(ApiError::failed)?,
+        })
     }
 
     /// [`Request::TemplateInstantiate`].
