@@ -48,6 +48,7 @@ Update the **Status** column below after every compare.
 | 1 | `speech.transcribe` + `speech.tts` JSON-RPC methods; share transcriber/voices into the socket Api; `speech` capability | `concat-api/{Cargo.toml,src/lib.rs,src/message.rs}`, `concat/src/panes/settings.rs`, `concat-speech/src/{transcribe,tts}.rs` (derives) | `feat(api): expose speech.transcribe and speech.tts` | none as of 0.2.7 | **ours — active** |
 | 2 | Kokoro no longer needs Pocket TTS on disk (lazy `recordings` resolution) | `concat-speech/src/tts.rs` | `fix(speech): a Kokoro voice no longer needs Pocket TTS` | bug, none | **ours — active** |
 | 3 | Word-level timestamps on captions (`Segment.words`) for karaoke captions | `concat-speech/src/transcribe.rs` | `feat(speech): word-level timestamps for captions` | none | **ours — active** |
+| 4 | `speech.models` lists whisper/TTS models + voices with downloaded flag | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add speech.models to list models and voices` | none | **ours — active** |
 | — | CI manual dispatch (fork-only, never upstream) | `.github/workflows/build-app.yml` | `ci: allow manual dispatch (fork-only)` | n/a | fork-only |
 
 ## Backlog (weak points to fix; see session notes)
@@ -55,8 +56,7 @@ Update the **Status** column below after every compare.
 Ranked by value for a polished auto-clip:
 
 1. ~~Word-level captions~~ → done (#3).
-2. `speech.models` — list downloaded whisper/TTS models + voices (reuse
-   `TranscriberStatus`/`TtsStatus`). Discoverability.
+2. ~~`speech.models` — list downloaded models + voices~~ → done (#4).
 3. Export/job **event streaming** through the MCP bridge (API already emits
    events; bridge must forward so callers stop polling the output file).
 4. Audio auto-polish: silence-trim, loudness-normalize, music ducking.
