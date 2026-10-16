@@ -43,6 +43,10 @@ name: Build app
 # The six targets are a matrix so one fails without taking the rest down;
 # `fail-fast` is off for the same reason.
 on:
+  # Fork-only: lets a maintainer start a build by hand from the Actions tab,
+  # to test a branch before opening a pull request. Not part of the upstream
+  # trigger set - drop this line from a merge request.
+  workflow_dispatch:
   workflow_call:
     inputs:
       ref:
