@@ -56,8 +56,8 @@ use concat_speech::tts::{SpeakRequest, SpeakResult};
 use concat_speech::{Speech, Transcriber};
 
 pub use message::{
-    API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, PackageInfo, ParamInfo,
-    Picture, Reply, Request, Response, SpeechCatalogue, Started, VersionInfo, Written,
+    API_VERSION, ApiError, AudioPeaks, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, PackageInfo,
+    ParamInfo, Picture, Reply, Request, Response, SpeechCatalogue, Started, VersionInfo, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -383,6 +383,9 @@ impl Api {
                 Ok(Reply::Media(media::probe(&path).map_err(ApiError::failed)?))
             }
             Request::MediaImport { path, file } => view(self.import(&path, &file)?),
+            Request::MediaPeaks { path, stream } => {
+                Ok(Reply::Peaks(self.media_peaks(&path, stream)?))
+            }
             Request::SpeechTranscribe { request } => {
                 Ok(Reply::Captions(self.transcribe(&request)?))
             }
@@ -544,6 +547,17 @@ impl Api {
     pub fn import(&mut self, path: &str, file: &str) -> Result<EditorView, ApiError> {
         let item = media::probe(file).map_err(ApiError::failed)?.to_new_media();
         self.apply(path, Command::AddMedia { item })
+    }
+
+    /// [`Request::MediaPeaks`]: the file's audio envelope, read straight from
+    /// the file. Reuses the window's peaks cache when the path is in one.
+    pub fn media_peaks(&self, path: &str, stream: Option<u32>) -> Result<AudioPeaks, ApiError> {
+        let peaks = media::peaks(path, stream, None).map_err(ApiError::failed)?;
+        Ok(AudioPeaks {
+            min: peaks.min,
+            max: peaks.max,
+            buckets_per_second: peaks.buckets_per_second,
+        })
     }
 
     /// [`Request::SpeechTranscribe`]: the clip's words, timed from the

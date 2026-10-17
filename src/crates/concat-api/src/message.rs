@@ -158,6 +158,18 @@ pub enum Request {
         /// The file to import.
         file: String,
     },
+    /// The audio waveform of a file: the min and max level in each time
+    /// bucket, for a caller to draw a waveform or find silences and onsets
+    /// itself (silence-trim, beat-sync). Reads the file; needs no open
+    /// project.
+    #[serde(rename = "media.peaks")]
+    MediaPeaks {
+        /// The media file.
+        path: String,
+        /// Which audio stream, by index; the first when absent.
+        #[serde(default)]
+        stream: Option<u32>,
+    },
 
     /// Transcribes a clip's audio to timed caption segments with one of the
     /// whisper models Settings has downloaded. Reads only; it places nothing.
@@ -378,6 +390,20 @@ pub struct ExportSpec {
     pub hdr: Option<bool>,
 }
 
+/// A file's audio envelope: `min[i]` and `max[i]` are the lowest and highest
+/// sample in bucket `i`, and `bucketsPerSecond` maps a bucket back to time.
+/// Low `max` over a run of buckets is silence; a sharp `max` rise is an onset.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioPeaks {
+    /// The lowest sample in each bucket, `-1.0..=0.0`.
+    pub min: Vec<f32>,
+    /// The highest sample in each bucket, `0.0..=1.0`.
+    pub max: Vec<f32>,
+    /// Buckets per second, to turn a bucket index into seconds.
+    pub buckets_per_second: f32,
+}
+
 /// What `speech.models` hands back: the whisper models for transcription,
 /// and the TTS models and voices, each with what is downloaded.
 #[derive(Clone, Serialize)]
@@ -405,6 +431,8 @@ pub enum Reply {
     Document(Value),
     /// [`Request::MediaProbe`].
     Media(MediaSummary),
+    /// [`Request::MediaPeaks`]: the file's audio envelope.
+    Peaks(AudioPeaks),
     /// [`Request::SpeechTranscribe`]: the clip's words, timed from the
     /// window's start.
     Captions(Vec<Segment>),
