@@ -416,6 +416,11 @@ pub enum CaptionPreset {
     /// A few words at a time (see `maxWords`), the big centred look short-form
     /// video uses. Falls back to the whole segment when it has no word timings.
     PopWord,
+    /// A whole line that lights up word by word as it is spoken: a `karaoke`
+    /// effect over the clip, its `progress` keyed from the segment's word
+    /// timings. Unspoken words sit dimmed until the playhead reaches them.
+    /// Reads best with word timings; without them the line simply sweeps once.
+    Karaoke,
 }
 
 /// Overrides on a preset's built-in look, for [`CaptionRequest`]. Every field
@@ -475,6 +480,13 @@ pub struct CaptionRequest {
     /// does not begin at timeline zero. Zero when absent.
     #[serde(default)]
     pub timeline_offset: f64,
+    /// Pop each caption in with a short scale keyframe as it appears - the
+    /// bounce short-form captions use. Off when absent. Applies to `phrase`
+    /// and `popWord`; `karaoke` has its own motion and ignores it. Turning it
+    /// on places clips one at a time rather than in one batch, so a run is a
+    /// caption per undo instead of one undo for the lot.
+    #[serde(default)]
+    pub animate: Option<bool>,
     /// Overrides on the preset look; see [`CaptionStyle`].
     #[serde(default)]
     pub style: Option<CaptionStyle>,

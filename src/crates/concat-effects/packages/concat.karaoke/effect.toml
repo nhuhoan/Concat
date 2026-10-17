@@ -1,0 +1,42 @@
+format = 2
+
+[effect]
+id = "concat.karaoke"
+name = "Karaoke"
+kind = "effect"
+category = "Text"
+order = 59
+description = "Lights a caption word by word as it is spoken: words not yet reached are dimmed, each brightening as the playhead arrives. Drive `progress` with a key per word - `caption.build`'s karaoke preset does this for you."
+
+# How far through the line the playhead is, 0..1, matched against each word's
+# place in `reveal_order`. Keyed from the words' timings.
+[[param]]
+key = "progress"
+label = "Progress"
+min = 0
+max = 1
+default = 0
+step = 0.001
+animate = true
+
+# How dim a word sits before it is reached, as a share of its full strength.
+[[param]]
+key = "dim"
+label = "Unspoken"
+min = 0
+max = 1
+default = 0.4
+step = 0.01
+
+# How softly a word lights as the playhead crosses it, in reveal-order units.
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 0.5
+default = 0.06
+step = 0.01
+
+[wgsl]
+entry = "effect.wgsl"
+space = "display"

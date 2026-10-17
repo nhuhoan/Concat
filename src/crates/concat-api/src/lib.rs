@@ -50,7 +50,10 @@ use concat_host::session::EditorView;
 use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, media, projects};
 use concat_project::Command;
-use concat_project::model::{MediaKind, TextStyle, VideoSettings};
+use concat_project::commands::ClipPatch;
+use concat_project::model::{
+    AppliedFilter, KeyEase, KeyProperty, MediaKind, ParamKey, TextStyle, VideoSettings,
+};
 use concat_speech::transcribe::{Segment, TranscribeRequest};
 use concat_speech::tts::{SpeakRequest, SpeakResult};
 use concat_speech::{Speech, Transcriber};
@@ -596,31 +599,111 @@ impl Api {
 
         let look = CaptionLook::of(request.preset, request.style.as_ref());
         let units = caption_units(&segments, request.preset, request.max_words);
-        let commands: Vec<Command> = units
-            .into_iter()
-            .map(|unit| {
-                let mut style = look.style.clone();
-                style.content = if look.uppercase {
-                    unit.text.to_uppercase()
-                } else {
-                    unit.text
-                };
-                Command::AddTextClip {
-                    track_id: request.track_id.clone(),
-                    above: true,
-                    start: unit.start + request.timeline_offset,
-                    style: Some(style),
-                    // A caption never collapses to nothing even if the model
-                    // timed its end at or before its start.
-                    duration: Some((unit.end - unit.start).max(0.2)),
-                    offset_y: Some(look.offset_y),
-                }
-            })
-            .collect();
+        let add = |unit: &CaptionUnit| -> Command {
+            let mut style = look.style.clone();
+            style.content = if look.uppercase {
+                unit.text.to_uppercase()
+            } else {
+                unit.text.clone()
+            };
+            Command::AddTextClip {
+                track_id: request.track_id.clone(),
+                above: true,
+                start: unit.start + request.timeline_offset,
+                style: Some(style),
+                // A caption never collapses to nothing even if the model timed
+                // its end at or before its start.
+                duration: Some((unit.end - unit.start).max(0.2)),
+                offset_y: Some(look.offset_y),
+            }
+        };
 
-        let clips = commands.len();
-        if clips > 0 {
-            self.apply(&request.path, Command::Batch { commands })?;
+        // Karaoke places a whole line, then keys a `concat.karaoke` effect over
+        // it from the segment's word timings so it lights up as it is spoken.
+        // One clip plus one effect per segment, each placed on its own for the
+        // minted id the effect patch needs.
+        if request.preset == CaptionPreset::Karaoke {
+            let mut clips = 0;
+            for segment in &segments {
+                let text = segment.text.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                let unit = CaptionUnit {
+                    start: segment.start,
+                    end: segment.end,
+                    text: text.to_owned(),
+                };
+                let view = self.apply(&request.path, add(&unit))?;
+                if let Some(clip_id) = view.created_id {
+                    let duration = (unit.end - unit.start).max(0.2);
+                    let filter = AppliedFilter {
+                        id: "concat.karaoke".to_owned(),
+                        params: BTreeMap::new(),
+                        enabled: true,
+                        keys: BTreeMap::from([(
+                            "progress".to_owned(),
+                            karaoke_keys(segment, duration),
+                        )]),
+                    };
+                    self.apply(
+                        &request.path,
+                        Command::UpdateClip {
+                            clip_id,
+                            patch: ClipPatch {
+                                video_effects: Some(vec![filter]),
+                                ..ClipPatch::default()
+                            },
+                        },
+                    )?;
+                }
+                clips += 1;
+            }
+            return Ok(CaptionRun { clips });
+        }
+
+        // Off: the whole run lands as one batch, one undo. On: each caption is
+        // placed on its own so its minted id can be keyed for the pop, which a
+        // batch cannot do - it does not know an id until the command has run.
+        if request.animate != Some(true) {
+            let commands: Vec<Command> = units.iter().map(&add).collect();
+            let clips = commands.len();
+            if clips > 0 {
+                self.apply(&request.path, Command::Batch { commands })?;
+            }
+            return Ok(CaptionRun { clips });
+        }
+
+        let mut clips = 0;
+        for unit in &units {
+            let view = self.apply(&request.path, add(unit))?;
+            if let Some(clip_id) = view.created_id {
+                let duration = (unit.end - unit.start).max(0.2);
+                // A ~120ms pop whatever the caption's length: a short ease-out
+                // from nine-tenths up to full size.
+                let at = (0.12 / duration).clamp(0.02, 0.4);
+                self.apply(
+                    &request.path,
+                    Command::SetClipKey {
+                        clip_id: clip_id.clone(),
+                        property: KeyProperty::Scale,
+                        at: 0.0,
+                        value: 0.9,
+                        ease: KeyEase::OUT,
+                    },
+                )?;
+                self.apply(
+                    &request.path,
+                    Command::SetClipKey {
+                        clip_id,
+                        property: KeyProperty::Scale,
+                        at,
+                        value: 1.0,
+                        ease: KeyEase::OUT,
+                    },
+                )?;
+            }
+            clips += 1;
         }
         Ok(CaptionRun { clips })
     }
@@ -1352,6 +1435,19 @@ impl CaptionLook {
                 0.0,
                 true,
             ),
+            // A whole readable line, white so the lit words read against the
+            // dimmed ones the `concat.karaoke` effect holds back.
+            CaptionPreset::Karaoke => (
+                TextStyle {
+                    font_size: 0.075,
+                    font_weight: 800.0,
+                    stroke_width: 0.005,
+                    max_width: 0.86,
+                    ..TextStyle::default()
+                },
+                0.3,
+                false,
+            ),
         };
         let mut look = CaptionLook {
             style,
@@ -1414,7 +1510,9 @@ fn caption_units(
         }
     };
     match preset {
-        CaptionPreset::Phrase => {
+        // Karaoke is a line per segment like phrase; it handles its own effect
+        // keying in `caption_build` and does not read these units.
+        CaptionPreset::Phrase | CaptionPreset::Karaoke => {
             for segment in segments {
                 whole_segment(&mut units, segment);
             }
@@ -1444,6 +1542,39 @@ fn caption_units(
         }
     }
     units
+}
+
+/// The `progress` keys that sweep a karaoke caption across its words: one key
+/// at each word's start, its value that word's place in the line, `0..1`, in
+/// the same order `reveal_order` bakes. With no word timings it sweeps once,
+/// start to end, so the line still fills left to right. `at` is a fraction of
+/// the clip, like every clip key.
+fn karaoke_keys(segment: &Segment, duration: f64) -> Vec<ParamKey> {
+    if segment.words.is_empty() {
+        return vec![
+            ParamKey {
+                at: 0.0,
+                value: 0.0,
+                ease: KeyEase::LINEAR,
+            },
+            ParamKey {
+                at: 1.0,
+                value: 1.0,
+                ease: KeyEase::LINEAR,
+            },
+        ];
+    }
+    let last = segment.words.len().saturating_sub(1).max(1) as f64;
+    segment
+        .words
+        .iter()
+        .enumerate()
+        .map(|(index, word)| ParamKey {
+            at: ((word.start - segment.start) / duration).clamp(0.0, 1.0),
+            value: index as f64 / last,
+            ease: KeyEase::LINEAR,
+        })
+        .collect()
 }
 
 /// Writes RGBA pixels as a PNG, creating the folder above the file.

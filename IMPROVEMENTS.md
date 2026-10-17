@@ -54,10 +54,16 @@ Update the **Status** column below after every compare.
 | 7 | `speech.deleteModel` / `speech.cancelDownload` — round out model management | `concat-api/src/{lib.rs,message.rs}` | (same commit as #6) | none | **ours — active** |
 | 8 | `media.peaks` exposes a file's audio waveform (min/max per bucket) for client-side silence/beat detection | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add media.peaks to expose a file's audio waveform` | none | **ours — active** |
 | 9 | `caption.build` — one-call auto-captions: timed segments → a batch of styled caption clips on the active timeline (presets: `phrase`, `popWord`; transcribes first if asked). The "CapCut Auto Captions" of the MCP. | `concat-api/src/{lib.rs,message.rs}`, `concat-speech/src/transcribe.rs` (Deserialize on Segment/Word) | `feat(api): add caption.build for one-call styled auto-captions` | none | **ours — active** |
+| 10 | `caption.build` `animate` flag — pops each caption in with a short scale keyframe (places clips one at a time for the minted id). | `concat-api/src/{lib.rs,message.rs}` | `feat(api): pop and karaoke captions in caption.build` | none | **ours — active** |
+| 11 | `caption.build` `karaoke` preset + `concat.karaoke` effect package — a line lights up word by word as spoken; `progress` keyed from word timings, dimming unspoken words. No-op off a title (reveal-order contract), so its probes are an identity round-trip. | `concat-api/src/{lib.rs,message.rs}`, `concat-effects/packages/concat.karaoke/{effect.toml,effect.wgsl,fixtures.toml}` | (same commit as #10) | none | **ours — active** |
 | — | CI manual dispatch (fork-only, never upstream) | `.github/workflows/build-app.yml` | `ci: allow manual dispatch (fork-only)` | n/a | fork-only |
 
 > #6 and #7 share one commit (same files, interleaved). If upstream later adds
 > one, split with `git rebase -i` before dropping the other.
+>
+> #10 and #11 likewise share one commit: both extend `caption.build`'s per-clip
+> apply path in the same function, so their hunks interleave. #11 also adds the
+> self-contained `concat.karaoke` package, which can be lifted out on its own.
 
 ## MCP editing-support verification
 
@@ -114,19 +120,21 @@ Genuinely still open, ranked:
    slideshow-from-images. Ergonomics, not missing capability.
 
 **Caption roadmap (expert eval, CapCut/OpenCut lens):** #9 ships the dominant
-short-form looks (`phrase`, `popWord`) as one-call auto-captions — static but
-well-styled (bold, stroked, placed), one undo for the whole run. Two follow-ups,
-in order of value/cost:
-- **Pop/enter animation** (scale keyframes per caption). Needs per-clip
-  `created_id`, so it applies clips one at a time, not as one batch — more code,
-  modest risk. Composition only, no engine change.
-- **Karaoke active-word highlight** (line stays, the spoken word recolours).
-  The *true* CapCut feature and the real capability gap: `TextStyle` has a
-  single `color`. The reveal infra is already there — `RevealMap`
-  (`concat-core/shader.rs`) bakes per-word order, and `shader_passes_at`
-  (`concat-export`) binds it to any shader — so a sibling "highlight" shader in
-  `concat-effects/packages/` could reuse it. Bigger (WGSL + FFmpeg CPU fallback
-  + manifest + GPU probes), so deferred until #9 is validated on a real clip.
+short-form looks (`phrase`, `popWord`) as one-call auto-captions; #10 adds the
+pop-in; #11 adds word-by-word karaoke. Remaining follow-up:
+- **Karaoke active-word _colour_** (the spoken word recolours, e.g. yellow,
+  rather than just the unspoken words dimming). This breaks the "no-op
+  off-title" property the identity probes rely on, so it needs real GPU probes
+  authored through the display↔light colour maths — which can't be validated
+  without rendering. Deferred until #11's look is confirmed on a real GPU; then
+  extend `concat.karaoke` with a colour param and hand-authored probes.
+
+> #11's shader is **display-space** on purpose: `scene_linear()` is `format >= 2`
+> and only scene-linear drawn packages must pin GPU probes (`concat-effects`
+> `every_scene_linear_package_probes_…`). A display-space format-2 shader still
+> needs probes, but because this one is a no-op off a title (reveal-order 0),
+> the probes are a plain round-trip identity — safe to author blind. If a future
+> change makes it alter pixels off a title, it will need real probes.
 
 Out of scope for the API: **visual sourcing** (stock footage / image gen) and a
 solid/gradient **background generator** (catalogue has none) — Concat is an
