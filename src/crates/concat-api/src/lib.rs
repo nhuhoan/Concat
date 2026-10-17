@@ -50,14 +50,15 @@ use concat_host::session::EditorView;
 use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, media, projects};
 use concat_project::Command;
-use concat_project::model::{MediaKind, VideoSettings};
+use concat_project::model::{MediaKind, TextStyle, VideoSettings};
 use concat_speech::transcribe::{Segment, TranscribeRequest};
 use concat_speech::tts::{SpeakRequest, SpeakResult};
 use concat_speech::{Speech, Transcriber};
 
 pub use message::{
-    API_VERSION, ApiError, AudioPeaks, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, PackageInfo,
-    ParamInfo, Picture, Reply, Request, Response, SpeechCatalogue, Started, VersionInfo, Written,
+    API_VERSION, ApiError, AudioPeaks, CaptionPreset, CaptionRequest, CaptionRun, CaptionStyle,
+    Dirs, Done, ErrorCode, Event, ExportSpec, Fill, PackageInfo, ParamInfo, Picture, Reply, Request,
+    Response, SpeechCatalogue, Started, VersionInfo, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -409,6 +410,9 @@ impl Api {
                 factor,
             } => view(self.enhance_clip(&path, &clip_id, factor.unwrap_or(2))?),
             Request::ClipReverse { path, clip_id } => view(self.reverse_clip(&path, &clip_id)?),
+            Request::CaptionBuild { request } => {
+                Ok(Reply::Captioned(self.caption_build(&request)?))
+            }
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
             Request::TemplateInstantiate {
@@ -572,6 +576,53 @@ impl Api {
         transcriber
             .transcribe(&self.dirs, request, |_| {})
             .map_err(ApiError::failed)
+    }
+
+    /// [`Request::CaptionBuild`]: a run of styled caption clips placed on the
+    /// open project's active timeline in one batch - one undo for the lot. Uses
+    /// the segments given, or transcribes first when only a `transcribe`
+    /// request is supplied. The preset sets the look and the grouping; the
+    /// optional style overrides it field by field.
+    pub fn caption_build(&mut self, request: &CaptionRequest) -> Result<CaptionRun, ApiError> {
+        let segments = match (&request.segments, &request.transcribe) {
+            (Some(segments), _) => segments.clone(),
+            (None, Some(transcribe)) => self.transcribe(transcribe)?,
+            (None, None) => {
+                return Err(ApiError::invalid(
+                    "caption.build needs either `segments` or a `transcribe` request",
+                ));
+            }
+        };
+
+        let look = CaptionLook::of(request.preset, request.style.as_ref());
+        let units = caption_units(&segments, request.preset, request.max_words);
+        let commands: Vec<Command> = units
+            .into_iter()
+            .map(|unit| {
+                let mut style = look.style.clone();
+                style.content = if look.uppercase {
+                    unit.text.to_uppercase()
+                } else {
+                    unit.text
+                };
+                Command::AddTextClip {
+                    track_id: request.track_id.clone(),
+                    above: true,
+                    start: unit.start + request.timeline_offset,
+                    style: Some(style),
+                    // A caption never collapses to nothing even if the model
+                    // timed its end at or before its start.
+                    duration: Some((unit.end - unit.start).max(0.2)),
+                    offset_y: Some(look.offset_y),
+                }
+            })
+            .collect();
+
+        let clips = commands.len();
+        if clips > 0 {
+            self.apply(&request.path, Command::Batch { commands })?;
+        }
+        Ok(CaptionRun { clips })
     }
 
     /// [`Request::SpeechTts`]: a WAV read from the text into the project
@@ -1253,6 +1304,146 @@ fn not_open(path: &str) -> ApiError {
 /// The edit layer's no, as the code that says so.
 fn refused(message: String) -> ApiError {
     ApiError::new(ErrorCode::Refused, message)
+}
+
+/// One caption to place: the span it covers and the text it shows.
+struct CaptionUnit {
+    start: f64,
+    end: f64,
+    text: String,
+}
+
+/// A preset's resolved look: the shared text style, where it sits, and whether
+/// its text is upper-cased - the request's overrides already folded in.
+struct CaptionLook {
+    style: TextStyle,
+    offset_y: f64,
+    uppercase: bool,
+}
+
+impl CaptionLook {
+    /// The built-in look for a preset, over the title default, with the
+    /// request's overrides applied last.
+    fn of(preset: CaptionPreset, overrides: Option<&CaptionStyle>) -> CaptionLook {
+        let (style, offset_y, uppercase) = match preset {
+            // A readable line, set a third of the way up from the bottom with a
+            // thin outline so it holds over footage.
+            CaptionPreset::Phrase => (
+                TextStyle {
+                    font_size: 0.07,
+                    font_weight: 700.0,
+                    stroke_width: 0.004,
+                    max_width: 0.86,
+                    ..TextStyle::default()
+                },
+                0.34,
+                false,
+            ),
+            // The big centred short-form look: a few bold, upper-cased words
+            // with a heavy outline.
+            CaptionPreset::PopWord => (
+                TextStyle {
+                    font_size: 0.11,
+                    font_weight: 800.0,
+                    stroke_width: 0.008,
+                    max_width: 0.8,
+                    ..TextStyle::default()
+                },
+                0.0,
+                true,
+            ),
+        };
+        let mut look = CaptionLook {
+            style,
+            offset_y,
+            uppercase,
+        };
+        if let Some(over) = overrides {
+            if let Some(value) = &over.font_family {
+                look.style.font_family = value.clone();
+            }
+            if let Some(value) = over.font_size {
+                look.style.font_size = value;
+            }
+            if let Some(value) = over.font_weight {
+                look.style.font_weight = value;
+            }
+            if let Some(value) = &over.color {
+                look.style.color = value.clone();
+            }
+            if let Some(value) = over.stroke_width {
+                look.style.stroke_width = value;
+            }
+            if let Some(value) = &over.stroke_color {
+                look.style.stroke_color = value.clone();
+            }
+            if let Some(value) = &over.background {
+                look.style.background = value.clone();
+            }
+            if let Some(value) = over.max_width {
+                look.style.max_width = value;
+            }
+            if let Some(value) = over.offset_y {
+                look.offset_y = value;
+            }
+            if let Some(value) = over.uppercase {
+                look.uppercase = value;
+            }
+        }
+        look
+    }
+}
+
+/// The captions a run of segments becomes under a preset: a line per segment
+/// for `phrase`, a few words at a time for `popWord` - which falls back to the
+/// whole segment when it carries no word timings.
+fn caption_units(
+    segments: &[Segment],
+    preset: CaptionPreset,
+    max_words: Option<usize>,
+) -> Vec<CaptionUnit> {
+    let mut units = Vec::new();
+    let whole_segment = |units: &mut Vec<CaptionUnit>, segment: &Segment| {
+        let text = segment.text.trim();
+        if !text.is_empty() {
+            units.push(CaptionUnit {
+                start: segment.start,
+                end: segment.end,
+                text: text.to_owned(),
+            });
+        }
+    };
+    match preset {
+        CaptionPreset::Phrase => {
+            for segment in segments {
+                whole_segment(&mut units, segment);
+            }
+        }
+        CaptionPreset::PopWord => {
+            let group = max_words.unwrap_or(3).max(1);
+            for segment in segments {
+                if segment.words.is_empty() {
+                    whole_segment(&mut units, segment);
+                    continue;
+                }
+                for chunk in segment.words.chunks(group) {
+                    let text = chunk
+                        .iter()
+                        .map(|word| word.text.trim())
+                        .filter(|word| !word.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if text.is_empty() {
+                        continue;
+                    }
+                    let start = chunk.first().map_or(segment.start, |word| word.start);
+                    let end = chunk.last().map_or(segment.end, |word| word.end);
+                    units.push(CaptionUnit { start, end, text });
+                }
+            }
+        }
+    }
+    units
 }
 
 /// Writes RGBA pixels as a PNG, creating the folder above the file.

@@ -256,6 +256,21 @@ pub enum Request {
         clip_id: String,
     },
 
+    /// Turns timed segments into a run of styled caption clips on the open
+    /// project's active timeline, in one batch - the one-call form of what the
+    /// window's Captions tool does, so a pipeline gets a finished caption track
+    /// without placing each clip itself. Give it `segments` (from
+    /// `speech.transcribe`) or a `transcribe` request to run first. The
+    /// `preset` chooses the look and how words are grouped. Refused when no
+    /// project is open at `path`, and - when it must transcribe - when the
+    /// server shares no transcriber.
+    #[serde(rename = "caption.build")]
+    CaptionBuild {
+        /// The caption job; see [`CaptionRequest`].
+        #[serde(flatten)]
+        request: CaptionRequest,
+    },
+
     /// Every effect package the build knows, with its parameters, so a
     /// caller can build a valid chain without reading a manifest.
     #[serde(rename = "catalogue.list")]
@@ -390,6 +405,81 @@ pub struct ExportSpec {
     pub hdr: Option<bool>,
 }
 
+/// How captions are grouped and styled for [`Request::CaptionBuild`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CaptionPreset {
+    /// One caption per transcript segment - a whole spoken line at a time.
+    /// The most readable default, and the only one that needs no word timings.
+    #[default]
+    Phrase,
+    /// A few words at a time (see `maxWords`), the big centred look short-form
+    /// video uses. Falls back to the whole segment when it has no word timings.
+    PopWord,
+}
+
+/// Overrides on a preset's built-in look, for [`CaptionRequest`]. Every field
+/// is optional; an absent one keeps the preset's value, so a caller tweaks one
+/// thing without restating the rest.
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CaptionStyle {
+    /// CSS family name, quotes included where the name needs them.
+    pub font_family: Option<String>,
+    /// Cap height as a fraction of frame height.
+    pub font_size: Option<f64>,
+    /// CSS weight, 100..=900.
+    pub font_weight: Option<f64>,
+    /// Fill colour, "#rrggbb".
+    pub color: Option<String>,
+    /// Outline thickness as a fraction of frame height; 0 for none.
+    pub stroke_width: Option<f64>,
+    /// Outline colour.
+    pub stroke_color: Option<String>,
+    /// Plate colour "#rrggbb[aa]"; empty string for none.
+    pub background: Option<String>,
+    /// Upper-case every caption's text.
+    pub uppercase: Option<bool>,
+    /// Widest a line runs before it wraps, as a fraction of frame width; 0 for
+    /// no limit.
+    pub max_width: Option<f64>,
+    /// Vertical placement as a frame-height fraction, like `AddTextClip`.
+    pub offset_y: Option<f64>,
+}
+
+/// The caption job for [`Request::CaptionBuild`].
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptionRequest {
+    /// The open project to place captions in.
+    pub path: String,
+    /// The timed segments to turn into captions. Takes precedence over
+    /// `transcribe` when both are given.
+    #[serde(default)]
+    pub segments: Option<Vec<Segment>>,
+    /// Transcribe this first when `segments` is absent; see
+    /// [`TranscribeRequest`].
+    #[serde(default)]
+    pub transcribe: Option<TranscribeRequest>,
+    /// Which look and grouping; see [`CaptionPreset`].
+    #[serde(default)]
+    pub preset: CaptionPreset,
+    /// Words per caption for the `popWord` preset; 3 when absent.
+    #[serde(default)]
+    pub max_words: Option<usize>,
+    /// The lane to place captions on; a fresh lane above the picture when
+    /// absent, the way the window's Captions tool lands them.
+    #[serde(default)]
+    pub track_id: Option<String>,
+    /// Seconds added to every segment time, for when the transcribed audio
+    /// does not begin at timeline zero. Zero when absent.
+    #[serde(default)]
+    pub timeline_offset: f64,
+    /// Overrides on the preset look; see [`CaptionStyle`].
+    #[serde(default)]
+    pub style: Option<CaptionStyle>,
+}
+
 /// A file's audio envelope: `min[i]` and `max[i]` are the lowest and highest
 /// sample in bucket `i`, and `bucketsPerSecond` maps a bucket back to time.
 /// Low `max` over a run of buckets is silence; a sharp `max` rise is an onset.
@@ -413,6 +503,14 @@ pub struct SpeechCatalogue {
     pub transcriber: TranscriberStatus,
     /// TTS models and voices for [`Request::SpeechTts`].
     pub tts: TtsStatus,
+}
+
+/// What [`Request::CaptionBuild`] hands back.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptionRun {
+    /// How many caption clips were placed.
+    pub clips: usize,
 }
 
 /// What a request hands back. Serialised as the payload alone: the variant
@@ -440,6 +538,8 @@ pub enum Reply {
     Spoken(SpeakResult),
     /// [`Request::SpeechModels`]: the speech models and voices on offer.
     SpeechModels(SpeechCatalogue),
+    /// [`Request::CaptionBuild`]: how many caption clips were placed.
+    Captioned(CaptionRun),
     /// [`Request::CatalogueList`].
     Packages(Vec<PackageInfo>),
     /// [`Request::TemplateList`].

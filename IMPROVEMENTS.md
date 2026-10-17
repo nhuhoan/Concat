@@ -53,6 +53,7 @@ Update the **Status** column below after every compare.
 | 6 | `clip.enhance` / `clip.reverse` — AI upscale/restore and reverse a clip over the socket (share enhancers/reversers) | `concat-api/src/{lib.rs,message.rs}`, `concat/src/panes/settings.rs` | `feat(api): expose clip.enhance/clip.reverse and speech model management` | none | **ours — active** |
 | 7 | `speech.deleteModel` / `speech.cancelDownload` — round out model management | `concat-api/src/{lib.rs,message.rs}` | (same commit as #6) | none | **ours — active** |
 | 8 | `media.peaks` exposes a file's audio waveform (min/max per bucket) for client-side silence/beat detection | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add media.peaks to expose a file's audio waveform` | none | **ours — active** |
+| 9 | `caption.build` — one-call auto-captions: timed segments → a batch of styled caption clips on the active timeline (presets: `phrase`, `popWord`; transcribes first if asked). The "CapCut Auto Captions" of the MCP. | `concat-api/src/{lib.rs,message.rs}`, `concat-speech/src/transcribe.rs` (Deserialize on Segment/Word) | `feat(api): add caption.build for one-call styled auto-captions` | none | **ours — active** |
 | — | CI manual dispatch (fork-only, never upstream) | `.github/workflows/build-app.yml` | `ci: allow manual dispatch (fork-only)` | n/a | fork-only |
 
 > #6 and #7 share one commit (same files, interleaved). If upstream later adds
@@ -107,9 +108,25 @@ Genuinely still open, ranked:
 3. Export/job **event streaming** through the MCP bridge (API already emits
    events; bridge polls the output file instead). Modest value.
 4. **Auto silence-trim** — detect and cut silences/breaths. Genuine gap, niche.
-5. High-level **helpers** that compose the primitives: karaoke caption
-   placement from `Segment.words` (now available), auto-ducking a music clip
-   under the voice, slideshow-from-images. Ergonomics, not missing capability.
+5. High-level **helpers** that compose the primitives: ~~caption placement from
+   `Segment.words`~~ → done (#9 `caption.build`); auto-ducking a music clip
+   under the voice (doable via `SetClipKey` Volume + `media.peaks`);
+   slideshow-from-images. Ergonomics, not missing capability.
+
+**Caption roadmap (expert eval, CapCut/OpenCut lens):** #9 ships the dominant
+short-form looks (`phrase`, `popWord`) as one-call auto-captions — static but
+well-styled (bold, stroked, placed), one undo for the whole run. Two follow-ups,
+in order of value/cost:
+- **Pop/enter animation** (scale keyframes per caption). Needs per-clip
+  `created_id`, so it applies clips one at a time, not as one batch — more code,
+  modest risk. Composition only, no engine change.
+- **Karaoke active-word highlight** (line stays, the spoken word recolours).
+  The *true* CapCut feature and the real capability gap: `TextStyle` has a
+  single `color`. The reveal infra is already there — `RevealMap`
+  (`concat-core/shader.rs`) bakes per-word order, and `shader_passes_at`
+  (`concat-export`) binds it to any shader — so a sibling "highlight" shader in
+  `concat-effects/packages/` could reuse it. Bigger (WGSL + FFmpeg CPU fallback
+  + manifest + GPU probes), so deferred until #9 is validated on a real clip.
 
 Out of scope for the API: **visual sourcing** (stock footage / image gen) and a
 solid/gradient **background generator** (catalogue has none) — Concat is an

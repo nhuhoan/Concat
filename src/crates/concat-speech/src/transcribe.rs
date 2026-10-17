@@ -170,7 +170,7 @@ pub struct TranscriberStatus {
 
 /// One word of a caption, timed from the window's start. The grain a
 /// karaoke-style caption highlights one word at a time from.
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Word {
     /// Seconds from the window's start.
@@ -182,7 +182,7 @@ pub struct Word {
 }
 
 /// One caption, in seconds relative to the transcribed window's start.
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Segment {
     /// Seconds from the window's start.
