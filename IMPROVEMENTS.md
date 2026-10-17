@@ -52,6 +52,7 @@ Update the **Status** column below after every compare.
 | 5 | `speech.download` fetches a whisper/TTS model headlessly through the shared engine | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add speech.download to fetch models headlessly` | none | **ours — active** |
 | 6 | `clip.enhance` / `clip.reverse` — AI upscale/restore and reverse a clip over the socket (share enhancers/reversers) | `concat-api/src/{lib.rs,message.rs}`, `concat/src/panes/settings.rs` | `feat(api): expose clip.enhance/clip.reverse and speech model management` | none | **ours — active** |
 | 7 | `speech.deleteModel` / `speech.cancelDownload` — round out model management | `concat-api/src/{lib.rs,message.rs}` | (same commit as #6) | none | **ours — active** |
+| 8 | `media.peaks` exposes a file's audio waveform (min/max per bucket) for client-side silence/beat detection | `concat-api/src/{lib.rs,message.rs}` | `feat(api): add media.peaks to expose a file's audio waveform` | none | **ours — active** |
 | — | CI manual dispatch (fork-only, never upstream) | `.github/workflows/build-app.yml` | `ci: allow manual dispatch (fork-only)` | n/a | fork-only |
 
 > #6 and #7 share one commit (same files, interleaved). If upstream later adds
@@ -75,7 +76,7 @@ Audit of the `Command` enum (what `edit.apply` can do) vs common editing needs:
 | Export, preview frame, templates, undo/redo/batch | ✅ |
 
 **Genuinely NOT supported via MCP (candidate suggestions):**
-1. **Auto silence-trim** — detect and cut silences/breaths from a voice clip.
+1. ~~Auto silence-trim in-engine~~ → superseded by #8 `media.peaks` (client-side).
 2. **Background generator** — a solid/gradient/noise clip (catalogue has no
    `generator` kind), so a faceless clip needs an imported image for a backdrop.
 3. **Markers / chapters** — no marker command; useful for navigation and
