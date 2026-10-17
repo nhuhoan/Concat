@@ -672,7 +672,7 @@ impl Api {
             .ok_or_else(|| ApiError::failed("this server enhances nothing"))?;
         let (media_path, still) = {
             let session = self.session(path)?;
-            let clip = session.project().clip(clip_id).ok_or_else(|| {
+            let clip = session.project().active().clip(clip_id).ok_or_else(|| {
                 ApiError::new(ErrorCode::NotFound, format!("no clip {clip_id:?}"))
             })?;
             let media = session
@@ -718,7 +718,7 @@ impl Api {
             .ok_or_else(|| ApiError::failed("this server reverses nothing"))?;
         let (media_path, audio_only, start, duration) = {
             let session = self.session(path)?;
-            let clip = session.project().clip(clip_id).ok_or_else(|| {
+            let clip = session.project().active().clip(clip_id).ok_or_else(|| {
                 ApiError::new(ErrorCode::NotFound, format!("no clip {clip_id:?}"))
             })?;
             let media = session
